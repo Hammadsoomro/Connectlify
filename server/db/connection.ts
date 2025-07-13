@@ -2,6 +2,10 @@ import mongoose from "mongoose";
 
 const connectDB = async () => {
   try {
+    console.log("🔍 Checking environment variables...");
+    console.log("DB_URL exists:", !!process.env.DB_URL);
+    console.log("DB_URL value:", process.env.DB_URL ? "SET" : "NOT_SET");
+    
     // Set mongoose options for better connection handling
     mongoose.set("strictQuery", false);
 
@@ -12,6 +16,8 @@ const connectDB = async () => {
     }
 
     if (!process.env.DB_URL) {
+      console.error("❌ DB_URL environment variable is missing");
+      console.error("Available env vars:", Object.keys(process.env).filter(key => key.includes('DB')));
       throw new Error("DB_URL environment variable is not set");
     }
 

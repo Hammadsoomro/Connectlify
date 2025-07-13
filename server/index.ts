@@ -1,7 +1,11 @@
+import dotenv from "dotenv";
+
+// Load environment variables first, before any other imports
+dotenv.config();
+
 import { webSocketManager } from "./websocket.js";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import { createServer as createHttpServer } from "http";
 import connectDB from "./db/connection.js";
 import { auth } from "./middleware/auth.js";
@@ -59,9 +63,6 @@ import {
   updateWebhookUrls,
 } from "./routes/debug.js";
 import { debugEnvironment } from "./routes/env-debug.js";
-
-// Load environment variables
-dotenv.config();
 
 export function createServer() {
   const app = express();
