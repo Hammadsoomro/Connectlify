@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import webSocketManager from "../websocket"; // ✅ Add this at top
+import socketIOManager from "../websocket.js";
 import twilioService from "../services/twilioService.js";
 import Contact from "../models/Contact";
 import Message from "../models/Message";
@@ -259,7 +259,7 @@ export const handleIncomingSMS = async (req: Request, res: Response) => {
 
     await message.save();
     // ✅ Emit for badge + new message
-    webSocketManager.notifyNewMessage(
+    socketIOManager.notifyNewMessage(
       phoneNumber.userId.toString(),
       contact._id.toString(),
       {

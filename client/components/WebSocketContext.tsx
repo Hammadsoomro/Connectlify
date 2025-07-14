@@ -5,83 +5,125 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { io, Socket } from "socket.io-client";
 
-interface WebSocketContextProps {
-  socket: WebSocket | null;
-  sendMessage: (data: any) => void;
+interface SocketContextProps {
+  socket: Socket | null;
+  isConnected: boolean;
+  sendMessage: (event: string, data: any) => void;
 }
 
-const WebSocketContext = createContext<WebSocketContextProps | undefined>(
-  undefined,
-);
+const SocketContext = createContext<SocketContextProps | undefined>(undefined);
 
-export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({
+export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   const isConnectedRef = useRef(false);
 
-  const sendMessage = (data: any) => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(data));
+  const sendMessage = (event: string, data: any) => {
+    if (socket && isConnected) {
+      socket.emit(event, data);
     }
   };
 
   useEffect(() => {
-    const token = localStorage.getItem("token"); // Adjust as per your auth flow
+    const token = localStorage.getItem("token");
     if (!token || isConnectedRef.current) return;
 
-    const ws = new WebSocket("ws://localhost:8080/ws"); // ✅ Correct port for WebSocket server
+    // Initialize Socket.IO client
+    const socketInstance = io("http://localhost:8080", {
+      path: "/socket.io/",
+      transports: ["websocket", "polling"],
+      autoConnect: true,
+    });
 
-    ws.onopen = () => {
-      console.log("🟢 WebSocket connected");
+    socketInstance.on("connect", () => {
+      console.log("🟢 Socket.IO connected");
+      setIsConnected(true);
       isConnectedRef.current = true;
-      ws.send(JSON.stringify({ type: "auth", payload: { token } }));
-    };
+      
+      // Authenticate immediately after connection
+      socketInstance.emit("auth", { token });
+    });
 
-    ws.onmessage = (event) => {
-      const { type, payload } = JSON.parse(event.data);
+    socketInstance.on("auth_success", (data) => {
+      console.log("✅ Socket.IO authentication successful:", data);
+    });
 
-      if (type === "new_message") {
-        // Emit custom event for global handling
-        window.dispatchEvent(
-          new CustomEvent("socket:new_message", { detail: payload }),
-        );
-      }
+    socketInstance.on("auth_error", (error) => {
+      console.error("❌ Socket.IO authentication failed:", error);
+    });
 
-      if (type === "typing") {
-        window.dispatchEvent(
-          new CustomEvent("socket:typing", { detail: payload }),
-        );
-      }
-    };
+    socketInstance.on("new_message", (data) => {
+      console.log("📨 New message received:", data);
+      // Emit custom event for global handling
+      window.dispatchEvent(
+        new CustomEvent("socket:new_message", { detail: data })
+      );
+    });
 
-    ws.onclose = () => {
-      console.warn("🔌 WebSocket disconnected");
+    socketInstance.on("unread_update", (data) => {
+      console.log("🔔 Unread badge update:", data);
+      window.dispatchEvent(
+        new CustomEvent("socket:unread_update", { detail: data })
+      );
+    });
+
+    socketInstance.on("typing", (data) => {
+      window.dispatchEvent(
+        new CustomEvent("socket:typing", { detail: data })
+      );
+    });
+
+    socketInstance.on("contact_status", (data) => {
+      window.dispatchEvent(
+        new CustomEvent("socket:contact_status", { detail: data })
+      );
+    });
+
+    socketInstance.on("message_status", (data) => {
+      window.dispatchEvent(
+        new CustomEvent("socket:message_status", { detail: data })
+      );
+    });
+
+    socketInstance.on("disconnect", () => {
+      console.warn("🔌 Socket.IO disconnected");
+      setIsConnected(false);
       isConnectedRef.current = false;
-    };
+    });
 
-    ws.onerror = (err) => {
-      console.error("🚨 WebSocket error:", err);
-    };
+    socketInstance.on("connect_error", (error) => {
+      console.error("🚨 Socket.IO connection error:", error);
+      setIsConnected(false);
+    });
 
-    setSocket(ws);
+    setSocket(socketInstance);
 
     return () => {
-      ws.close();
+      socketInstance.disconnect();
+      setIsConnected(false);
+      isConnectedRef.current = false;
     };
   }, []);
 
   return (
-    <WebSocketContext.Provider value={{ socket, sendMessage }}>
+    <SocketContext.Provider value={{ socket, isConnected, sendMessage }}>
       {children}
-    </WebSocketContext.Provider>
+    </SocketContext.Provider>
   );
 };
 
-export const useWebSocket = () => {
-  const context = useContext(WebSocketContext);
-  if (!context)
-    throw new Error("useWebSocket must be used within WebSocketProvider");
+export const useSocket = () => {
+  const context = useContext(SocketContext);
+  if (!context) {
+    throw new Error("useSocket must be used within SocketProvider");
+  }
   return context;
 };
+
+// Keep the old export for backward compatibility
+export const useWebSocket = useSocket;
+export const WebSocketProvider = SocketProvider;

@@ -1,237 +1,198 @@
-import { WebSocketServer } from "ws";
+import { Server as SocketIOServer } from "socket.io";
 import jwt from "jsonwebtoken";
 import User from "./models/User.js";
 
-interface AuthenticatedWebSocket extends WebSocket {
-  on: any;
+interface AuthenticatedSocket extends Socket {
   userId?: string;
   user?: any;
 }
 
-interface WebSocketMessage {
+interface SocketMessage {
   type: string;
   payload: any;
 }
 
-class WebSocketManager {
-  private wss: WebSocketServer | null = null;
-  private clients: Map<string, AuthenticatedWebSocket[]> = new Map();
+class SocketIOManager {
+  private io: SocketIOServer | null = null;
+  private authenticatedSockets: Map<string, AuthenticatedSocket[]> = new Map();
 
   initialize(server: any) {
-    this.wss = new WebSocketServer({ server, path: "/ws" });
+    this.io = new SocketIOServer(server, {
+      cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+      },
+      path: "/socket.io/"
+    });
 
-    this.wss.on("connection", (ws: AuthenticatedWebSocket) => {
-      console.log("New WebSocket connection");
+    this.io.on("connection", (socket: AuthenticatedSocket) => {
+      console.log("New Socket.IO connection:", socket.id);
 
-      ws.on("message", async (data) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(data.toString());
-          await this.handleMessage(ws, message);
-        } catch (error) {
-          console.error("Error handling WebSocket message:", error);
-        }
+      socket.on("auth", async (data) => {
+        await this.handleAuthentication(socket, data);
       });
 
-      ws.on("close", () => {
-        this.removeClient(ws);
-        console.log("WebSocket connection closed");
+      socket.on("join_conversation", (data) => {
+        this.handleJoinConversation(socket, data);
       });
 
-      ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        this.removeClient(ws);
+      socket.on("leave_conversation", (data) => {
+        this.handleLeaveConversation(socket, data);
+      });
+
+      socket.on("typing", (data) => {
+        this.handleTyping(socket, data);
+      });
+
+      socket.on("disconnect", () => {
+        this.removeClient(socket);
+        console.log("Socket.IO connection closed:", socket.id);
+      });
+
+      socket.on("error", (error) => {
+        console.error("Socket.IO error:", error);
+        this.removeClient(socket);
       });
     });
 
-    console.log("WebSocket server initialized");
+    console.log("Socket.IO server initialized");
   }
 
-  private async handleMessage(
-    ws: AuthenticatedWebSocket,
-    message: WebSocketMessage,
-  ) {
-    const { type, payload } = message;
-
-    switch (type) {
-      case "auth":
-        await this.handleAuthentication(ws, payload);
-        break;
-
-      case "join_conversation":
-        this.handleJoinConversation(ws, payload);
-        break;
-
-      case "leave_conversation":
-        this.handleLeaveConversation(ws, payload);
-        break;
-
-      case "typing":
-        this.handleTyping(ws, payload);
-        break;
-
-      default:
-        console.log(`Unknown WebSocket message type: ${type}`);
-    }
-  }
-
-  private async handleAuthentication(ws: AuthenticatedWebSocket, payload: any) {
+  private async handleAuthentication(socket: AuthenticatedSocket, payload: any) {
     try {
       const { token } = payload;
 
       if (!token) {
-        this.sendError(ws, "Authentication token required");
+        socket.emit("auth_error", { message: "Authentication token required" });
         return;
       }
 
       const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
       const decoded = jwt.verify(token, JWT_SECRET) as any;
 
-      const user = decoded.userId;
+      const user = await User.findById(decoded.userId);
       if (!user) {
-        this.sendError(ws, "User not found");
+        socket.emit("auth_error", { message: "User not found" });
         return;
       }
 
-      ws.userId = user._id.toString();
-      ws.user = user;
+      socket.userId = user._id.toString();
+      socket.user = user;
 
-      this.addClient(ws);
+      // Join user to their personal room
+      socket.join(`user_${socket.userId}`);
+      
+      this.addClient(socket);
 
-      this.send(ws, "auth_success", {
+      socket.emit("auth_success", {
         userId: user._id,
         message: "Authentication successful",
       });
 
-      console.log(`User ${user.email} authenticated via WebSocket`);
+      console.log(`User ${user.email} authenticated via Socket.IO`);
     } catch (error) {
-      console.error("WebSocket authentication error:", error);
-      this.sendError(ws, "Authentication failed");
+      console.error("Socket.IO authentication error:", error);
+      socket.emit("auth_error", { message: "Authentication failed" });
     }
   }
 
-  private handleJoinConversation(ws: AuthenticatedWebSocket, payload: any) {
+  private handleJoinConversation(socket: AuthenticatedSocket, payload: any) {
     const { conversationId } = payload;
-    // In a real implementation, you'd track which conversations each user has joined
-    console.log(`User ${ws.userId} joined conversation ${conversationId}`);
+    socket.join(`conversation_${conversationId}`);
+    console.log(`User ${socket.userId} joined conversation ${conversationId}`);
   }
 
-  private handleLeaveConversation(ws: AuthenticatedWebSocket, payload: any) {
+  private handleLeaveConversation(socket: AuthenticatedSocket, payload: any) {
     const { conversationId } = payload;
-    console.log(`User ${ws.userId} left conversation ${conversationId}`);
+    socket.leave(`conversation_${conversationId}`);
+    console.log(`User ${socket.userId} left conversation ${conversationId}`);
   }
 
-  private handleTyping(ws: AuthenticatedWebSocket, payload: any) {
+  private handleTyping(socket: AuthenticatedSocket, payload: any) {
     const { contactId, isTyping } = payload;
-
-    // Broadcast typing status to relevant users
-    this.broadcastToContact(contactId, "typing", {
-      contactId: ws.userId,
+    
+    // Broadcast typing status to the contact's room
+    socket.to(`user_${contactId}`).emit("typing", {
+      contactId: socket.userId,
       isTyping,
     });
   }
 
-  private addClient(ws: AuthenticatedWebSocket) {
-    if (!ws.userId) return;
+  private addClient(socket: AuthenticatedSocket) {
+    if (!socket.userId) return;
 
-    if (!this.clients.has(ws.userId)) {
-      this.clients.set(ws.userId, []);
+    if (!this.authenticatedSockets.has(socket.userId)) {
+      this.authenticatedSockets.set(socket.userId, []);
     }
 
-    this.clients.get(ws.userId)!.push(ws);
+    this.authenticatedSockets.get(socket.userId)!.push(socket);
   }
 
-  private removeClient(ws: AuthenticatedWebSocket) {
-    if (!ws.userId) return;
+  private removeClient(socket: AuthenticatedSocket) {
+    if (!socket.userId) return;
 
-    const userClients = this.clients.get(ws.userId);
-    if (userClients) {
-      const index = userClients.indexOf(ws);
+    const userSockets = this.authenticatedSockets.get(socket.userId);
+    if (userSockets) {
+      const index = userSockets.indexOf(socket);
       if (index > -1) {
-        userClients.splice(index, 1);
+        userSockets.splice(index, 1);
       }
 
-      if (userClients.length === 0) {
-        this.clients.delete(ws.userId);
+      if (userSockets.length === 0) {
+        this.authenticatedSockets.delete(socket.userId);
       }
     }
-  }
-
-  private send(ws: AuthenticatedWebSocket, type: string, payload: any) {
-    try {
-      ws.send(JSON.stringify({ type, payload }));
-    } catch (error) {
-      console.error("Error sending WebSocket message:", error);
-    }
-  }
-
-  private sendError(ws: AuthenticatedWebSocket, message: string) {
-    this.send(ws, "error", { message });
   }
 
   // Public methods for broadcasting messages
-
-  public broadcastToUser(userId: string, type: string, payload: any) {
-    const userClients = this.clients.get(userId);
-    if (userClients) {
-      userClients.forEach((ws) => {
-        this.send(ws, type, payload);
+  public notifyNewMessage(recipientUserId: string, contactId: string, message: any) {
+    if (this.io) {
+      this.io.to(`user_${recipientUserId}`).emit("new_message", {
+        contactId,
+        message,
+      });
+      
+      // Also emit unread badge update
+      this.io.to(`user_${recipientUserId}`).emit("unread_update", {
+        contactId,
+        hasUnread: true,
       });
     }
   }
 
-  public broadcastToContact(contactId: string, type: string, payload: any) {
-    // This would typically involve looking up which users should receive this message
-    // For now, we'll just broadcast to the specific contact
-    this.broadcastToUser(contactId, type, payload);
+  public notifyMessageStatus(recipientUserId: string, messageId: string, status: string) {
+    if (this.io) {
+      this.io.to(`user_${recipientUserId}`).emit("message_status", {
+        messageId,
+        status,
+      });
+    }
   }
 
-  public notifyNewMessage(
-    recipientUserId: string,
-    contactId: string,
-    message: any,
-  ) {
-    this.broadcastToUser(recipientUserId, "new_message", {
-      contactId,
-      message,
-    });
-  }
-
-  public notifyMessageStatus(
-    recipientUserId: string,
-    messageId: string,
-    status: string,
-  ) {
-    this.broadcastToUser(recipientUserId, "message_status", {
-      messageId,
-      status,
-    });
-  }
-
-  public notifyContactStatus(
-    recipientUserId: string,
-    contactId: string,
-    isOnline: boolean,
-  ) {
-    this.broadcastToUser(
-      recipientUserId,
-      isOnline ? "contact_online" : "contact_offline",
-      {
+  public notifyContactStatus(recipientUserId: string, contactId: string, isOnline: boolean) {
+    if (this.io) {
+      this.io.to(`user_${recipientUserId}`).emit("contact_status", {
         contactId,
         isOnline,
-      },
-    );
+      });
+    }
+  }
+
+  public broadcastToUser(userId: string, event: string, data: any) {
+    if (this.io) {
+      this.io.to(`user_${userId}`).emit(event, data);
+    }
   }
 
   public getConnectedUsers(): string[] {
-    return Array.from(this.clients.keys());
+    return Array.from(this.authenticatedSockets.keys());
   }
 
   public isUserConnected(userId: string): boolean {
-    return this.clients.has(userId);
+    return this.authenticatedSockets.has(userId);
   }
 }
 
 // Singleton instance
-export const webSocketManager = new WebSocketManager();
-
-export default webSocketManager;
+export const socketIOManager = new SocketIOManager();
+export default socketIOManager;

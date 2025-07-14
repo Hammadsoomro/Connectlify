@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 // Load environment variables first, before any other imports
 dotenv.config();
 
-import { webSocketManager } from "./websocket.js";
+import { socketIOManager } from "./websocket.js";
 import express from "express";
 import cors from "cors";
 import { createServer as createHttpServer } from "http";
@@ -156,10 +156,10 @@ export function createServer() {
   // Note: WebSocket server disabled for now to avoid import issues during development
   // In production, you can enable it by setting ENABLE_WEBSOCKET=true
   if (process.env.ENABLE_WEBSOCKET === "true") {
-    webSocketManager.initialize(server);
-    console.log("✅ WebSocket server enabled");
+    socketIOManager.initialize(server);
+    console.log("✅ Socket.IO server enabled");
   } else {
-    console.log("🟡 WebSocket server is disabled");
+    console.log("🟡 Socket.IO server is disabled");
   }
 
   return server;
