@@ -18,7 +18,8 @@ const connectDB = async () => {
     if (!process.env.DB_URL) {
       console.error("❌ DB_URL environment variable is missing");
       console.error("Available env vars:", Object.keys(process.env).filter(key => key.includes('DB')));
-      throw new Error("DB_URL environment variable is not set");
+      console.error("⚠️ MongoDB connection skipped - DB_URL not configured");
+      return;
     }
 
     const conn = await mongoose.connect(process.env.DB_URL as string, {
@@ -45,11 +46,8 @@ const connectDB = async () => {
     });
   } catch (error) {
     console.error("❌ Error connecting to MongoDB:", error);
-    console.error(
-      "Connection URL:",
-      process.env.DB_URL?.replace(/\/\/.*@/, "//***@"),
-    ); // Hide credentials
-    process.exit(1);
+    console.error("⚠️ MongoDB connection failed - continuing without database");
+    console.error("Note: Some features may not work without database connection");
   }
 };
 
