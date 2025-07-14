@@ -31,7 +31,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({
     const token = localStorage.getItem("token"); // Adjust as per your auth flow
     if (!token || isConnectedRef.current) return;
 
-    const ws = new WebSocket("ws://localhost:3000/ws"); // ✅ Replace with your prod endpoint
+    const ws = new WebSocket("ws://localhost:8080/ws"); // ✅ Correct port for WebSocket server
 
     ws.onopen = () => {
       console.log("🟢 WebSocket connected");
